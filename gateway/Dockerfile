@@ -8,4 +8,4 @@ FROM ${HERMES_IMAGE}
 
 USER hermes
 RUN PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright \
-    /opt/hermes/.venv/bin/python3 -m playwright install chromium
+    /opt/hermes/node_modules/.bin/playwright install chromium
