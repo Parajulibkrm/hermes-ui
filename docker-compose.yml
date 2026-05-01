@@ -17,12 +17,6 @@ services:
       # project). Dokploy preserves this path across redeploys, so config + auth
       # + sessions persist. Shared with the dashboard service.
       - ../files/hermes:/opt/data
-      # Named volume seeded from the agent image's /opt/hermes (source code,
-      # node_modules, venv, AND .playwright/ Chromium binaries). Shared with the
-      # webui service so it can `uv pip install` hermes-agent and run browser
-      # tools against the same Playwright install. Delete this volume after
-      # bumping HERMES_IMAGE to pick up the new agent code on next start.
-      - hermes-agent-src:/opt/hermes
     healthcheck:
       test: ["CMD-SHELL", "ss -tln | grep -q 8642 || exit 1"]
       interval: 30s
@@ -72,71 +66,9 @@ services:
         - traefik.http.middlewares.hermes-dashboard-auth.basicauth.users=${HERMES_DASHBOARD_BASICAUTH:-}
         - traefik.http.services.hermes-dashboard.loadbalancer.server.port=9119
 
-  # ---------------------------------------------------------------------------
-  # Community Hermes WebUI (nesquena/hermes-webui) — alternative chat UI on :8787
-  # ---------------------------------------------------------------------------
-  webui:
-    # Custom build that adds Chromium runtime libraries on top of the upstream
-    # nesquena/hermes-webui image. The Playwright Chromium binary itself is
-    # provided by the gateway image via the shared `hermes-agent-src` volume.
-    build:
-      context: ./webui
-    image: paperclip-hermes/hermes-webui:latest
-    container_name: hermes-webui
-    restart: unless-stopped
-    shm_size: 2g
-    depends_on:
-      - gateway
-    networks:
-      - dokploy-network
-    expose:
-      - "8787"
-    # Run as the image's built-in `hermeswebui` user (uid 10000), which already
-    # matches the gateway image's `hermes` user. Do NOT set WANTED_UID/WANTED_GID
-    # — when those equal an existing in-image uid, docker_init.bash creates a
-    # sidecar user at a different uid (e.g. `hermeswebuitoo` at 1025), which
-    # then can't traverse /home/hermeswebui (mode 700, owned by uid 10000) and
-    # so can't see the shared Playwright Chromium binaries from the gateway.
-    user: "10000:10000"
-    environment:
-      # Required by docker_init.bash — refuses to start if unset.
-      HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui-mvp
-      # Point Playwright at the Chromium install shipped inside the gateway
-      # image (mounted at /home/hermeswebui/.hermes/hermes-agent via the shared
-      # named volume below).
-      PLAYWRIGHT_BROWSERS_PATH: /home/hermeswebui/.hermes/hermes-agent/.playwright
-      # Optional — set in .env to password-protect the WebUI.
-      HERMES_WEBUI_PASSWORD: ${HERMES_WEBUI_PASSWORD:-}
-    volumes:
-      # Same data dir as gateway/dashboard so all three see the same config,
-      # auth.json, and sessions.
-      - ../files/hermes:/home/hermeswebui/.hermes
-      # Shared with gateway: agent source code + Playwright Chromium browsers.
-      # Mounted where docker_init.bash looks for hermes-agent (so it pip-installs
-      # from here) and where PLAYWRIGHT_BROWSERS_PATH expects the binaries.
-      - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent
-      # Workspace dir the WebUI exposes for agent file ops. Persisted via
-      # Dokploy's managed `../files/` like the hermes data dir.
-      - ../files/workspace:/workspace
-    deploy:
-      labels:
-        - traefik.enable=true
-        - traefik.docker.network=dokploy-network
-        - traefik.http.routers.hermes-webui.rule=Host(`${HERMES_WEBUI_DOMAIN}`)
-        - traefik.http.routers.hermes-webui.entrypoints=websecure
-        - traefik.http.routers.hermes-webui.tls=true
-        - traefik.http.routers.hermes-webui.tls.certresolver=letsencrypt
-        - traefik.http.services.hermes-webui.loadbalancer.server.port=8787
-
 networks:
   # External: created by Dokploy at install time. We just join it; we don't
   # define it. If this isn't a Dokploy host, create it once with:
   #   docker network create --driver overlay --attachable dokploy-network
   dokploy-network:
     external: true
-
-volumes:
-  # Auto-populated from the gateway image's /opt/hermes on first start: hermes
-  # source, node_modules, Python venv, and .playwright/ Chromium binaries.
-  # Shared with the webui so it can run hermes-agent and browser tools.
-  hermes-agent-src:
