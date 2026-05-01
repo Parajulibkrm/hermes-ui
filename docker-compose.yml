@@ -91,11 +91,14 @@ services:
       - dokploy-network
     expose:
       - "8787"
+    # Run as the image's built-in `hermeswebui` user (uid 10000), which already
+    # matches the gateway image's `hermes` user. Do NOT set WANTED_UID/WANTED_GID
+    # — when those equal an existing in-image uid, docker_init.bash creates a
+    # sidecar user at a different uid (e.g. `hermeswebuitoo` at 1025), which
+    # then can't traverse /home/hermeswebui (mode 700, owned by uid 10000) and
+    # so can't see the shared Playwright Chromium binaries from the gateway.
+    user: "10000:10000"
     environment:
-      # Match the `hermes` user (UID 10000) baked into nousresearch/hermes-agent
-      # so this container can read/write the shared /opt/data volume.
-      WANTED_UID: ${HERMES_WEBUI_UID:-10000}
-      WANTED_GID: ${HERMES_WEBUI_GID:-10000}
       # Required by docker_init.bash — refuses to start if unset.
       HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui-mvp
       # Point Playwright at the Chromium install shipped inside the gateway
