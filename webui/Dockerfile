@@ -28,4 +28,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
+# Ensure a passwd/group entry exists for uid/gid 10000 so the WebUI can run as
+# that uid (matching the gateway image's `hermes` user, which owns the shared
+# /home/hermeswebui dir and the Playwright binaries inside the named volume).
+# Without this, `whoami` and Python's pwd.getpwuid() fail and the entrypoint
+# hangs. We use a neutral name (`hermesvol`) to avoid colliding with the
+# upstream image's existing `hermeswebui`/`hermeswebuitoo` users.
+RUN set -eux; \
+    if ! getent group 10000 >/dev/null; then groupadd -g 10000 hermesvol; fi; \
+    if ! getent passwd 10000 >/dev/null; then \
+        useradd -u 10000 -g 10000 -d /home/hermeswebui -M -s /bin/bash hermesvol; \
+    fi
+
 USER hermeswebuitoo
