@@ -6,6 +6,12 @@
 ARG HERMES_IMAGE=nousresearch/hermes-agent:latest
 FROM ${HERMES_IMAGE}
 
-USER hermes
-RUN PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright \
-    /opt/hermes/node_modules/.bin/playwright install chromium
+# Install as root: at build time /opt/hermes/.playwright is still root-owned
+# (base image's entrypoint chowns it to hermes only at container start, which
+# never runs during a build), so USER hermes hits EACCES on the lockfile.
+# HOME is set so npm/playwright don't try to write into /root.
+USER root
+RUN HOME=/opt/hermes \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright \
+    /opt/hermes/node_modules/.bin/playwright install chromium && \
+    chown -R hermes:hermes /opt/hermes/.playwright
