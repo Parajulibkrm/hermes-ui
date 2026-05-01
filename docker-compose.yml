@@ -3,7 +3,13 @@ services:
   # Hermes Gateway — core agent runtime & API on :8642
   # ---------------------------------------------------------------------------
   gateway:
-    image: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+    # Custom build that adds full Chromium on top of the base image so browser
+    # tools (browser_navigate etc.) work. Base image only ships headless-shell.
+    build:
+      context: ./gateway
+      args:
+        HERMES_IMAGE: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+    image: paperclip-hermes/hermes-gateway:latest
     container_name: hermes-gateway
     command: gateway run
     restart: unless-stopped
