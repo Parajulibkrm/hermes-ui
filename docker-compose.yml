@@ -1,81 +1,64 @@
 services:
-  paperclip-hermes:
-    build: .
-    container_name: paperclip-hermes
-    stdin_open: true
-    tty: true
+  # ---------------------------------------------------------------------------
+  # Hermes Gateway — core agent runtime & API on :8642
+  # ---------------------------------------------------------------------------
+  gateway:
+    image: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+    container_name: hermes-gateway
+    command: gateway run
     restart: unless-stopped
-    # Attach to Dokploy's overlay network so Traefik can reach this service.
-    # Without this, Dokploy's auto-generated Traefik route returns 502 because
-    # the container isn't on the network Traefik routes on.
+    shm_size: 1g
+    networks:
+      - dokploy-network
+    expose:
+      - "8642"
+    volumes:
+      # Bind-mount to Dokploy's managed `../files/` dir (sibling of the compose
+      # project). Dokploy preserves this path across redeploys, so config + auth
+      # + sessions persist. Shared with the dashboard service.
+      - ../files/hermes:/opt/data
+    healthcheck:
+      test: ["CMD-SHELL", "ss -tln | grep -q 8642 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Hermes Dashboard — built-in web UI, served on :9119
+  # ---------------------------------------------------------------------------
+  dashboard:
+    image: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+    container_name: hermes-dashboard
+    command: dashboard --host 0.0.0.0 --insecure
+    restart: unless-stopped
+    depends_on:
+      - gateway
     networks:
       - dokploy-network
     expose:
       # Internal-only port. Traefik connects on this port across dokploy-network.
-      # We don't publish it to the host (`ports:`) because Dokploy/Swarm strips
-      # host port mappings anyway when Traefik fronts the service.
-      - "3100"
+      - "9119"
     environment:
-      # --- Model selection (optional, default in hermes-config.yaml is openrouter/free) ---
-      - HERMES_MODEL=${HERMES_MODEL:-openrouter/free}
-
-      # --- Inference provider keys (set whichever ones your HERMES_MODEL uses) ---
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-
-      # --- Browser providers (cloud) — optional, enables remote Chromium for
-      #     the browser-harness skill. The image also bundles local Playwright
-      #     deps if you'd rather drive a headless browser inside the container. ---
-      - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY:-}
-      - BROWSERBASE_API_KEY=${BROWSERBASE_API_KEY:-}
-      - BROWSERBASE_PROJECT_ID=${BROWSERBASE_PROJECT_ID:-}
-
-      # --- Paperclip server config ---
-      # Reachability preset (loopback|lan|tailnet). `lan` listens on all
-      # interfaces so Traefik can reach paperclipai over the overlay network.
-      - PAPERCLIP_BIND=${PAPERCLIP_BIND:-lan}
-      # Hostname check strictness (public|private). `public` accepts any Host
-      # header — the right choice for any reverse-proxied deploy where
-      # deploymentMode=authenticated still gates access via login.
-      - PAPERCLIP_EXPOSURE=${PAPERCLIP_EXPOSURE:-public}
-      # Optional bypass: set this instead of deriving from `PAPERCLIP_EXPOSURE`.
-      # See https://paperclip.inc/docs/deploy/environment-variables/
-      - PAPERCLIP_DEPLOYMENT_EXPOSURE=${PAPERCLIP_DEPLOYMENT_EXPOSURE:-}
-      # Comma-separated allowlist overlay (normally derived from `PAPERCLIP_DOMAIN`).
-      - PAPERCLIP_ALLOWED_HOSTNAMES=${PAPERCLIP_ALLOWED_HOSTNAMES:-}
-      # Origin for authenticated + public deployments (default: https:// plus PAPERCLIP_DOMAIN).
-      - PAPERCLIP_PUBLIC_URL=${PAPERCLIP_PUBLIC_URL:-}
-      # Public hostname Traefik routes to this service. The entrypoint
-      # registers it via `paperclipai allowed-hostname` on every boot, so
-      # paperclipai's hostname allowlist accepts requests proxied in.
-      - IP_ADDRESS=${IP_ADDRESS:-}
-      - PAPERCLIP_DOMAIN=${PAPERCLIP_DOMAIN}
+      GATEWAY_HEALTH_URL: http://hermes-gateway:8642
     volumes:
-      - paperclip-data:/data/paperclip
-      - hermes-data:/data/hermes
-      - browser-harness-cache:/opt/browser-harness/.cache
+      # Same data dir as the gateway so the dashboard sees the same config,
+      # auth.json, and sessions.
+      - ../files/hermes:/opt/data
     # Explicit Traefik labels — Dokploy's Domains-tab UI sometimes doesn't
-    # inject these into Compose-mode services (we observed empty labels in
-    # `docker service inspect`). Setting them here guarantees Traefik routes
-    # the configured ${PAPERCLIP_DOMAIN} to this service on port 3100.
+    # inject these into Compose-mode services. Setting them here guarantees
+    # Traefik routes ${HERMES_DOMAIN} to this service on port 9119.
     # In Swarm mode, Traefik reads labels from `deploy.labels`, not the
     # top-level `labels:` key.
     deploy:
       labels:
         - traefik.enable=true
         - traefik.docker.network=dokploy-network
-        - traefik.http.routers.paperclip.rule=Host(`${PAPERCLIP_DOMAIN}`)
-        - traefik.http.routers.paperclip.entrypoints=websecure
-        - traefik.http.routers.paperclip.tls=true
-        - traefik.http.routers.paperclip.tls.certresolver=letsencrypt
-        - traefik.http.services.paperclip.loadbalancer.server.port=3100
-
-volumes:
-  paperclip-data:
-  hermes-data:
-  browser-harness-cache:
+        - traefik.http.routers.hermes-dashboard.rule=Host(`${HERMES_DOMAIN}`)
+        - traefik.http.routers.hermes-dashboard.entrypoints=websecure
+        - traefik.http.routers.hermes-dashboard.tls=true
+        - traefik.http.routers.hermes-dashboard.tls.certresolver=letsencrypt
+        - traefik.http.services.hermes-dashboard.loadbalancer.server.port=9119
 
 networks:
   # External: created by Dokploy at install time. We just join it; we don't
